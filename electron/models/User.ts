@@ -5,6 +5,7 @@ export interface IUser extends Document {
   avatar: string;
   friends?: string[];
   friendrequests?: Object[];
+  groups?: Object[];
 }
 const UserSchema: Schema = new Schema<IUser>(
   {
@@ -13,6 +14,7 @@ const UserSchema: Schema = new Schema<IUser>(
     avatar: { type: String, required: true },
     friends: [{ type: String, required: false }],
     friendrequests: [{ type: Object, required: false }],
+    groups: [{ type: Object, required: false }],
   },
   { timestamps: true }
 );

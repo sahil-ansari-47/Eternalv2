@@ -2,6 +2,7 @@ import { createServer } from "http";
 import express from "express";
 import { UserModel } from "./models/User.js";
 import { MessageModel } from "./models/Messages.js";
+import { RoomModel } from "./models/Room.js";
 import { Server, Socket } from "socket.io";
 import { redis } from "./redis.js";
 import cors from "cors";
@@ -33,7 +34,8 @@ const io = new Server(httpServer, {
 // Map usernames to socket IDs
 const users: Record<string, string> = {}; // username -> socketId
 const sockets: Record<string, string> = {}; // socketId -> User
-const MESSAGE_LIMIT = 10;
+const MESSAGE_LIMIT = 15;
+const messages: Record<string, any[]> = {};
 
 io.on("connection", (socket: Socket) => {
   console.log("🔗 User connected:", socket.id);
@@ -42,6 +44,14 @@ io.on("connection", (socket: Socket) => {
   socket.on("register", async (username: string) => {
     users[username] = socket.id;
     sockets[socket.id] = username;
+    // const rooms = await RoomModel.find({ participants: username });
+    // for (const room of rooms) {
+    //   const roomId=String(room._id);
+    //   const msgs = await redis.lrange(roomId, -MESSAGE_LIMIT, -1);
+    //   for(const msg of msgs) io.to(roomId).emit("roomMessage", msg);
+    //   messages[roomId]= msgs;
+    // }
+    console.log(messages);
     const count = await redis.llen(username.concat(":pending"));
     const pendingMessages: any = await redis.lpop(
       username.concat(":pending"),
@@ -56,59 +66,116 @@ io.on("connection", (socket: Socket) => {
   // ✅ One-to-One Messaging
   socket.on(
     "privateMessage",
-    async ({ to, text, id }: { to: string; text: string; id: string }) => {
-      const fromUser = sockets[socket.id];
+    async ({
+      to,
+      text,
+      id,
+      from,
+      timestamp,
+    }: {
+      to: string;
+      text: string;
+      id: string;
+      from: string;
+      timestamp: Date;
+    }) => {
       const toSocketId = users[to]; // lookup by username
       console.log(toSocketId);
-
+      const chatKey = `chat:${[from, to].sort().join(":")}`;
+      console.log(chatKey);
       const message = {
         id,
-        from: fromUser,
+        from,
         to,
         text,
-        timestamp: new Date().toISOString(),
+        timestamp,
+        chatKey,
       };
-      const chatKey = `chat:${[fromUser, to].sort().join(":")}`;
-      console.log(chatKey);
+      console.log(message.timestamp);
       await redis.rpush(chatKey, message);
       await redis.ltrim(chatKey, -MESSAGE_LIMIT, -1);
       await MessageModel.create(message);
       if (toSocketId) {
-        io.to(toSocketId).emit("privateMessage", {
-          message,
-        });
-        console.log(`💌 ${fromUser} -> ${to}: ${text}`);
+        io.to(toSocketId).emit("privateMessage", message);
+        console.log(`💌 ${from} -> ${to}: ${text}`);
       } else {
         await redis.rpush(to.concat(":pending"), message);
       }
     }
   );
 
-  // ✅ Join Room
-  socket.on("joinRoom", (room: string) => {
-    socket.join(room);
-    const username = sockets[socket.id] ?? "Unknown";
-    console.log(`${username} joined room: ${room}`);
-
-    io.to(room).emit("roomMessage", {
-      from: "system",
-      text: `${username} joined the room.`,
+  socket.on(
+    "createRoom",
+    async ({
       room,
-    });
-  });
+      participants,
+    }: {
+      room: string;
+      participants: string[];
+    }) => {
+      const group = await RoomModel.findOneAndUpdate(
+        { name: room },
+        { name: room, participants },
+        { upsert: true }
+      );
+      if(!group) return;
+      for (const participant of participants) {
+        await UserModel.findOneAndUpdate(
+          { username: participant },
+          { $push: { groups: group._id } },
+        )
+      }
+    }
+  );
+  // ✅ Join Room
+  socket.on(
+    "joinRoom",
+    ({ room, roomId }: { room: string; roomId: string }) => {
+      socket.join(roomId);
+      const username = sockets[socket.id] ?? "Unknown";
+      console.log(`${username} joined room: ${room}`);
 
-  // ✅ Room/Group Messaging
-  socket.on("roomMessage", ({ room, text }: { room: string; text: string }) => {
-    const fromUser = sockets[socket.id];
-    if (fromUser) {
-      io.to(room).emit("roomMessage", {
-        from: fromUser,
-        text,
+      io.to(roomId).emit("roomMessage", {
+        from: "system",
+        text: `${username} joined the room.`,
         room,
       });
-      console.log(`👥 [${room}] ${fromUser}: ${text}`);
     }
-  });
+  );
+
+  // ✅ Room/Group Messaging
+  socket.on(
+    "roomMessage",
+    async ({
+      id,
+      room,
+      roomId,
+      text,
+      from,
+      timestamp,
+    }: {
+      id: string;
+      room: string;
+      roomId: string;
+      text: string;
+      from: string;
+      timestamp: Date;
+    }) => {
+      const message = {
+        id,
+        from,
+        text,
+        room,
+        roomId,
+        timestamp,
+      };
+      await redis.rpush(roomId, message);
+      await redis.ltrim(roomId, -MESSAGE_LIMIT, -1);
+      await MessageModel.create(message);
+      io.to(roomId).emit("roomMessage", { message });
+      console.log(`👥 [${room}] ${from}: ${text}`);
+    }
+  );
 
   // Handle disconnect
   socket.on("disconnect", () => {
@@ -164,15 +231,15 @@ app.put("/api/friends/add", requireAuth(), async (req, res) => {
   const user2 = await UserModel.findOne({ username: to });
   if (!user1 || !user2)
     return res.status(404).json({ message: "User not found" });
-  if (user1.friendrequests?.some((e: any) => e.to === to))
-    return res
-      .status(400)
-      .json({ message: "Friend request already sent" });
-  if (user2.friendrequests?.some((e: any) => e.from === from))
+  if (user1.friendrequests?.some((e: any) => e.from === to))
     return res
       .status(400)
       .json({ message: "You already have a pending friend request" });
-  user2.friendrequests?.push({ from, to, date: new Date().toISOString() });
+  if (user2.friendrequests?.some((e: any) => e.from === from))
+    return res
+      .status(400)
+      .json({ message: "Friend request already sent to user" });
+  user2.friendrequests?.push({ from, date: new Date().toISOString() });
   await user2.save();
   res.status(200).json({ message: "Friend request sent to", to });
 });
@@ -183,19 +250,19 @@ app.put("/api/friends/handle", requireAuth(), async (req, res) => {
   if (accept) {
     const user1 = await UserModel.findOneAndUpdate(
       { username: from },
-      { $push: { friends: to }, $pull: { friendrequests: { from } } }
+      { $push: { friends: to } }
     );
     const user2 = await UserModel.findOneAndUpdate(
       { username: to },
-      { $push: { friends: from }, $pull: { friendrequests: { from } } }
+      { $push: { friends: from }, $pull: { friendrequests: { from: from } } }
     );
     if (!user1 || !user2)
       return res.status(404).json({ message: "Unsuccessful request" });
     res.status(200).json({ message: "Friend request accepted", to });
   } else {
     const user = await UserModel.findOneAndUpdate(
-      { username: from },
-      { $pull: { friendrequests: { from } } }
+      { username: to },
+      { $pull: { friendrequests: { from: from } } }
     );
     if (!user) return res.status(404).json({ message: "Unsuccessful request" });
 
@@ -203,19 +270,38 @@ app.put("/api/friends/handle", requireAuth(), async (req, res) => {
   }
 });
 app.get("/api/messages", async (req, res) => {
-  console.log("fetch messages");
   try {
     const { from, to } = req.query;
     console.log("Fetching messages...");
     const messages = await redis.lrange(
       `chat:${[from, to].sort().join(":")}`,
-      -10,
+      -MESSAGE_LIMIT,
       -1
     );
-    res.json({ messages });
+    res.json(messages);
   } catch (err) {
     console.error("Error fetching messages:", err);
     res.status(500).json({ error: "Failed to fetch messages" });
+  }
+});
+
+app.get("/api/messages/history", async (req, res) => {
+  console.log("fetch history");
+  try {
+    const { from, to, before } = req.query;
+    const chatKey = `chat:${[from, to].sort().join(":")}`;
+    console.log("before", before);
+    const query: any = {
+      chatKey,
+      timestamp: { $lt: new Date(before as string) },
+    };
+    const messages = await MessageModel.find(query)
+      .sort({ timestamp: 1 })
+      .limit(30);
+    res.json(messages); // reverse so newest is at bottom
+  } catch (err) {
+    console.error("Error fetching history:", err);
+    res.status(500).json({ error: "Failed to fetch history" });
   }
 });
 

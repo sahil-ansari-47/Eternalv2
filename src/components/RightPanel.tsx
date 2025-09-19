@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { io } from "socket.io-client";
 import { Input } from "./ui/input";
 import { ChevronLeft } from "lucide-react";
@@ -7,15 +7,20 @@ const socket = io("http://localhost:3000");
 
 type Message = {
   id: string;
-  from?: string;
+  from: string;
   to?: string;
   text: string;
-  timestamp: string;
+  timestamp: Date;
   room?: string;
 };
 type FriendRequest = {
   from: string;
   date: string;
+};
+
+type Group = {
+  id: string;
+  name: string;
 };
 
 type UserData = {
@@ -24,6 +29,7 @@ type UserData = {
   avatar: string;
   friends?: string[];
   friendrequests?: FriendRequest[];
+  groups?: Group[];
 };
 
 type ChatMode = "private" | "group";
@@ -38,6 +44,9 @@ const RightPanel = () => {
   const [searchUser, setSearchUser] = useState("");
   const [room, setRoom] = useState<string>(""); // for group chat
   const [inChat, setInChat] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const chatRef = useRef<HTMLDivElement>(null);
+  const currRef = useRef<HTMLDivElement>(null);
 
   const fetchUser = async () => {
     if (isSignedIn) {
@@ -62,23 +71,66 @@ const RightPanel = () => {
   useEffect(() => {
     const fetchMessages = async () => {
       if (!inChat || !targetUser) return;
-
       try {
         console.log(userData?.username, targetUser);
         const res = await fetch(
           `http://localhost:3000/api/messages?from=${userData?.username}&to=${targetUser}`
         );
-
         const history = await res.json();
-        setMessages(history.messages);
+        const msg = history.map((msg: Message) => ({
+          ...msg,
+          timestamp: new Date(msg.timestamp),
+        }));
+        console.log(msg);
+        setMessages(msg);
+        setTimeout(() => {
+          chatRef.current?.scrollTo({
+            top: chatRef.current.scrollHeight,
+            behavior: "smooth",
+          });
+        }, 0);
       } catch (err) {
         console.error("❌ Failed to fetch messages from Redis:", err);
         setMessages([]);
       }
     };
-
     fetchMessages();
   }, [inChat, targetUser, userData?.username]);
+
+  const fetchOlder = async () => {
+    if (!messages.length) return;
+    setLoadingMore(true);
+
+    const oldest = new Date(messages[0].timestamp).toISOString();
+    console.log("fetching older", oldest, messages[0]);
+    const res = await fetch(
+      `http://localhost:3000/api/messages/history?from=${userData?.username}&to=${targetUser}&before=${oldest}`
+    );
+    const data = await res.json();
+    console.log(data);
+    for (const message of data) {
+      message.timestamp = new Date(message.timestamp);
+    }
+    console.log(data);
+    const prevHeight = chatRef.current?.scrollHeight || 0;
+    setMessages((prev) => [...data, ...prev]);
+    setTimeout(() => {
+      if (chatRef.current) {
+        const newHeight = chatRef.current.scrollHeight;
+        chatRef.current.scrollTop = newHeight - prevHeight;
+      }
+    }, 0);
+
+    setLoadingMore(false);
+  };
+
+  // detect scroll top
+  const handleScroll = () => {
+    if (!chatRef.current || loadingMore) return;
+    if (chatRef.current.scrollTop <= 0) {
+      fetchOlder();
+    }
+  };
 
   useEffect(() => {
     // Register current user
@@ -96,35 +148,28 @@ const RightPanel = () => {
         from: string;
         text: string;
         to: string;
-        timestamp: string;
+        timestamp: Date;
       }) => {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: msg.id,
-            from: msg.from,
-            text: msg.text,
-            timestamp: msg.timestamp,
-          },
-        ]);
+        setMessages((prev) => [...prev, msg]);
       }
     );
 
     // Listen for room messages
-    // socket.on(
-    //   "roomMessage",
-    //   (msg: { from: string; text: string; room: string }) => {
-    //     setMessages((prev) => [
-    //       ...prev,
-    //       {
-    //         id: crypto.randomUUID(),
-    //         from: `${msg.from}@${msg.room}`,
-    //         text: msg.text,
-    //         room: msg.room,
-    //       },
-    //     ]);
-    //   }
-    // );
+    socket.on(
+      "roomMessage",
+      (msg: { from: string; text: string; room: string }) => {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            from: `${msg.from}@${msg.room}`,
+            text: msg.text,
+            room: msg.room,
+            timestamp: new Date(),
+          },
+        ]);
+      }
+    );
 
     return () => {
       socket.off("privateMessage");
@@ -132,9 +177,7 @@ const RightPanel = () => {
     };
   }, [userData?.username]);
 
-  function formatToIST(isoString: string): string {
-    const date = new Date(isoString);
-
+  function formatToIST(date: Date): string {
     return new Intl.DateTimeFormat("en-GB", {
       hour: "2-digit",
       minute: "2-digit",
@@ -144,22 +187,22 @@ const RightPanel = () => {
   }
 
   const sendMessage = () => {
+    if (!userData) return;
     if (!input.trim()) return;
     const message = {
       id: crypto.randomUUID(),
       to: targetUser,
       text: input,
+      from: userData.username,
+      timestamp: new Date(),
     };
-    console.log("Sending message to", targetUser);
+    // if (!chatRef.current) return;
+    // console.log(chatRef.current.scrollHeight);
     socket.emit("privateMessage", message);
-    setMessages((prev) => [
-      ...prev,
-      {
-        ...message,
-        timestamp: new Date().toISOString(),
-        from: userData?.username,
-      },
-    ]);
+    setMessages((prev) => [...prev, message]);
+    // if(currRef.current) currRef.current.scrollIntoView({ behavior: "smooth" });
+    // chatRef.current.scrollTop = chatRef.current.scrollHeight;
+    // console.log(chatRef.current.scrollHeight);
     setInput("");
   };
 
@@ -227,13 +270,13 @@ const RightPanel = () => {
           <div className="flex w-full h-full divide-x divide-neutral-300">
             <div className="h-full w-1/3 flex flex-col">
               <div
-                className="border-b border-neutral-300 py-2"
+                className="border-b border-neutral-300 py-2 cursor-pointer"
                 onClick={() => setChatMode("private")}
               >
                 Private
               </div>
               <div
-                className="border-b border-neutral-300 py-2"
+                className="border-b border-neutral-300 py-2 cursor-pointer"
                 onClick={() => setChatMode("group")}
               >
                 Group
@@ -272,7 +315,7 @@ const RightPanel = () => {
                       <div>{friendrequest.from}</div>
                       <div>{friendrequest.date}</div>
                       <button
-                        className="bg-green-500"
+                        className="bg-green-500 cursor-pointer"
                         onClick={() => {
                           handleFriendRequest(friendrequest.from, true);
                           fetchUser();
@@ -281,7 +324,7 @@ const RightPanel = () => {
                         Accept
                       </button>
                       <button
-                        className="bg-red-500"
+                        className="bg-red-500 cursor-pointer"
                         onClick={() => {
                           handleFriendRequest(friendrequest.from, false);
                           fetchUser();
@@ -303,36 +346,31 @@ const RightPanel = () => {
                       {friend}
                     </div>
                   ))}
-                  {/* <div
-                    className="text-center p-2 cursor-pointer"
-                    onClick={() => {
-                      setInChat(true);
-                      setTargetUser("sandarva-9304");
-                    }}
-                  >
-                    Sandarva-9304
-                  </div>
-                  <div
-                    className="text-center p-2 cursor-pointer"
-                    onClick={() => {
-                      setInChat(true);
-                      setTargetUser("ankit-5803");
-                    }}
-                  >
-                    Ankit-5803
-                  </div> */}
                 </>
               ) : (
-                <>
-                  <div>Groups</div>
-                </>
+                <div className="flex flex-col gap-2">
+                  <button className="text-center rounded-lg p-2 text-white bg-blue-600 cursor-pointer">Create New Group</button>
+                  <div className="text-center">Your Groups</div>
+                  {userData?.groups?.map((group) => (
+                    <div
+                      key={group.id}
+                      className="text-center p-2 cursor-pointer"
+                      onClick={() => {
+                        setInChat(true);
+                        setRoom(group.id);
+                      }}
+                    >
+                      {group.name}
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           </div>
         )}
         {inChat && (
-          <>
-            <div className="flex gap-2 border-b border-neutral-300 p-4">
+          <div className="h-full">
+            <div className="flex h-1/12 gap-2 border-b border-neutral-300 p-4">
               <ChevronLeft
                 className="translate-y-0.5 cursor-pointer"
                 onClick={() => {
@@ -342,19 +380,26 @@ const RightPanel = () => {
               />
               {targetUser}
             </div>
-            <div className="flex-1 flex flex-col justify-end pb-1">
-              {messages.length === 0 && (
+            <div
+              ref={chatRef}
+              onScroll={handleScroll}
+              className="overflow-y-scroll h-10/12 pb-1 flex flex-col justify-end gap-2"
+            >
+              {messages.length === 0 ? (
                 <div className="text-center">
                   No messages. Start a conversation.
                 </div>
-              )}
-              <div className="flex flex-col justify-end overflow-y-auto gap-2">
-                {messages
+              ) : (
+                messages
                   .filter(
-                    (msg) => [targetUser, userData?.username].includes(msg.from) //issue
+                    (msg) =>
+                      (msg.from === targetUser &&
+                        msg.to === userData?.username) ||
+                      (msg.from === userData?.username && msg.to === targetUser)
                   )
-                  .map((msg) => (
+                  .map((msg, idx) => (
                     <div
+                      ref={idx === messages.length - 1 ? currRef : null}
                       key={msg.id}
                       className={`flex px-4 ${
                         msg.from === userData?.username
@@ -369,19 +414,16 @@ const RightPanel = () => {
                             : "bg-gray-700 text-gray-100 rounded-bl-none"
                         }`}
                       >
-                        {/* <span className="block text-xs text-gray-400">
-                        {msg.from}
-                      </span> */}
                         {msg.text}
-                        <span className="text-xs">
+                        <span className="block text-xs text-gray-400 text-right">
                           {formatToIST(msg.timestamp)}
                         </span>
                       </div>
                     </div>
-                  ))}
-              </div>
+                  ))
+              )}
             </div>
-            <div className="p-3 border-t border-gray-800 flex gap-2">
+            <div className="p-3 h-1/12 border-t border-gray-800 flex gap-2">
               <input
                 type="text"
                 placeholder="Type a message..."
@@ -397,7 +439,7 @@ const RightPanel = () => {
                 Send
               </button>
             </div>
-          </>
+          </div>
         )}
       </SignedIn>
       <SignedOut>

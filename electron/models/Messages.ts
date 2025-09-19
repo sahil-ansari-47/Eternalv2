@@ -4,18 +4,24 @@ import mongoose, { Document, Schema, Model } from "mongoose";
 export interface IMessage extends Document {
   id: string;
   from: string;
-  to: string;
+  to?: string;
   text: string;
   room?: string;
+  roomId?: string;
+  chatKey?: string;
+  timestamp?: Date;
 }
 
 const MessageSchema: Schema = new Schema<IMessage>(
   {
     id: { type: String, required: true, unique: true },
     from: { type: String, required: true },
-    to: { type: String, required: true },
+    to: { type: String, required: false },
     text: { type: String, required: true },
     room: { type: String, required: false },
+    roomId: { type: String, required: false },
+    chatKey: { type: String, required: false },
+    timestamp: { type: Date, required: true },
   },
   { timestamps: true }
 );
