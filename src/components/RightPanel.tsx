@@ -12,6 +12,7 @@ type Message = {
   text: string;
   timestamp: Date;
   room?: string;
+  chatKey: string;
 };
 type FriendRequest = {
   from: string;
@@ -19,8 +20,8 @@ type FriendRequest = {
 };
 
 type Group = {
-  id: string;
-  name: string;
+  room: string;
+  roomId: string;
 };
 
 type UserData = {
@@ -42,11 +43,14 @@ const RightPanel = () => {
   const [chatMode, setChatMode] = useState<ChatMode>("private");
   const [targetUser, setTargetUser] = useState("");
   const [searchUser, setSearchUser] = useState("");
-  const [room, setRoom] = useState<string>(""); // for group chat
+  const [room, setRoom] = useState<Group | null>(null); // for group chat
   const [inChat, setInChat] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const chatRef = useRef<HTMLDivElement>(null);
   const currRef = useRef<HTMLDivElement>(null);
+  const [CreateGroup, setCreateGroup] = useState(false);
+  const [selectedFriends, setSelectedFriends] = useState<string[]>([]);
+  const [groupName, setGroupName] = useState("");
 
   const fetchUser = async () => {
     if (isSignedIn) {
@@ -70,12 +74,20 @@ const RightPanel = () => {
 
   useEffect(() => {
     const fetchMessages = async () => {
-      if (!inChat || !targetUser) return;
       try {
-        console.log(userData?.username, targetUser);
-        const res = await fetch(
-          `http://localhost:3000/api/messages?from=${userData?.username}&to=${targetUser}`
-        );
+        let res;
+        if (targetUser) {
+          console.log(userData?.username, targetUser);
+          res = await fetch(
+            `http://localhost:3000/api/pvtmessages?from=${userData?.username}&to=${targetUser}`
+          );
+        } else if (room) {
+          res = await fetch(
+            `http://localhost:3000/api/roommessages?room=${room?.room}&roomId=${room?.roomId}`
+          );
+        } else {
+          return;
+        }
         const history = await res.json();
         const msg = history.map((msg: Message) => ({
           ...msg,
@@ -83,20 +95,17 @@ const RightPanel = () => {
         }));
         console.log(msg);
         setMessages(msg);
-        setTimeout(() => {
-          chatRef.current?.scrollTo({
-            top: chatRef.current.scrollHeight,
-            behavior: "smooth",
-          });
-        }, 0);
+        console.log(messages);
+        // setTimeout(() => {
+        //   currRef.current?.scrollIntoView({ behavior: "smooth" });
+        // }, 0);
       } catch (err) {
         console.error("❌ Failed to fetch messages from Redis:", err);
         setMessages([]);
       }
     };
     fetchMessages();
-  }, [inChat, targetUser, userData?.username]);
-
+  }, [targetUser, room]);
   const fetchOlder = async () => {
     if (!messages.length) return;
     setLoadingMore(true);
@@ -104,7 +113,7 @@ const RightPanel = () => {
     const oldest = new Date(messages[0].timestamp).toISOString();
     console.log("fetching older", oldest, messages[0]);
     const res = await fetch(
-      `http://localhost:3000/api/messages/history?from=${userData?.username}&to=${targetUser}&before=${oldest}`
+      `http://localhost:3000/api/pvtmessages/history?from=${userData?.username}&to=${targetUser}&before=${oldest}`
     );
     const data = await res.json();
     console.log(data);
@@ -136,6 +145,11 @@ const RightPanel = () => {
     // Register current user
     if (isSignedIn && userData?.username) {
       socket.emit("register", userData?.username);
+      if (userData?.groups) {
+        for (const group of userData?.groups) {
+          socket.emit("joinRoom", group);
+        }
+      }
     } else {
       return;
     }
@@ -149,7 +163,9 @@ const RightPanel = () => {
         text: string;
         to: string;
         timestamp: Date;
+        chatKey: string;
       }) => {
+        msg.timestamp = new Date(msg.timestamp);  
         setMessages((prev) => [...prev, msg]);
       }
     );
@@ -157,15 +173,24 @@ const RightPanel = () => {
     // Listen for room messages
     socket.on(
       "roomMessage",
-      (msg: { from: string; text: string; room: string }) => {
+      (msg: {
+        id: string;
+        from: string;
+        text: string;
+        chatKey: string;
+        timestamp: Date;
+        room: string;
+      }) => {
         setMessages((prev) => [
           ...prev,
           {
             id: crypto.randomUUID(),
-            from: `${msg.from}@${msg.room}`,
+            // from: `${msg.from}@${msg.room}`,
+            from: msg.from,
             text: msg.text,
             room: msg.room,
             timestamp: new Date(),
+            chatKey: msg.chatKey,
           },
         ]);
       }
@@ -189,17 +214,39 @@ const RightPanel = () => {
   const sendMessage = () => {
     if (!userData) return;
     if (!input.trim()) return;
-    const message = {
-      id: crypto.randomUUID(),
-      to: targetUser,
-      text: input,
-      from: userData.username,
-      timestamp: new Date(),
-    };
+    if (targetUser) {
+      const chatKey = `chat:${[userData.username, targetUser]
+        .sort()
+        .join(":")}`;
+      const message = {
+        id: crypto.randomUUID(),
+        to: targetUser,
+        text: input,
+        from: userData.username,
+        timestamp: new Date(),
+        chatKey,
+      };
+      socket.emit("privateMessage", message);
+      setMessages((prev) => [...prev, message]);
+    } else if (room) {
+      const chatKey = `${room.room}:${room.roomId}`;
+      const message = {
+        id: crypto.randomUUID(),
+        room: room.room,
+        text: input,
+        from: userData.username,
+        timestamp: new Date(),
+        chatKey,
+        roomId: room.roomId,
+      };
+      console.log("sending...");
+      socket.emit("roomMessage", message);
+      setMessages((prev) => [...prev, message]);
+    } else {
+      return;
+    }
     // if (!chatRef.current) return;
     // console.log(chatRef.current.scrollHeight);
-    socket.emit("privateMessage", message);
-    setMessages((prev) => [...prev, message]);
     // if(currRef.current) currRef.current.scrollIntoView({ behavior: "smooth" });
     // chatRef.current.scrollTop = chatRef.current.scrollHeight;
     // console.log(chatRef.current.scrollHeight);
@@ -260,6 +307,26 @@ const RightPanel = () => {
     } catch (err) {
       console.log("Error", err);
     }
+  };
+  const handleCreateGroup = async () => {
+    if (!userData) return;
+    if (!groupName.trim()) {
+      console.log("Group name cannot be empty");
+      return;
+    }
+    if (selectedFriends.length === 0) {
+      console.log("Select at least one friend");
+      return;
+    }
+    socket.emit("createRoom", {
+      room: groupName,
+      roomId: crypto.randomUUID(),
+      participants: [userData.username, ...selectedFriends],
+    });
+    setCreateGroup(false);
+    setSelectedFriends([]);
+    setGroupName("");
+    fetchUser();
   };
 
   return (
@@ -349,18 +416,95 @@ const RightPanel = () => {
                 </>
               ) : (
                 <div className="flex flex-col gap-2">
-                  <button className="text-center rounded-lg p-2 text-white bg-blue-600 cursor-pointer">Create New Group</button>
-                  <div className="text-center">Your Groups</div>
+                  <button
+                    className="text-center rounded-lg p-2 m-2 text-white bg-blue-600 cursor-pointer"
+                    onClick={() => setCreateGroup(true)}
+                  >
+                    Create New Group
+                  </button>
+                  {CreateGroup && (
+                    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center">
+                      <div className="p-6 rounded-xl w-96 shadow-lg flex flex-col gap-4 border-2 border-neutral-300">
+                        <h2 className="text-lg font-semibold text-center">
+                          Create Group
+                        </h2>
+                        {/* Group Name Input */}
+                        <input
+                          type="text"
+                          placeholder="Group name"
+                          value={groupName}
+                          onChange={(e) => setGroupName(e.target.value)}
+                          className="border rounded-lg p-2 w-full"
+                        />
+                        {/* Friend List with Multi Select */}
+                        <div className="flex flex-col gap-2 max-h-48 overflow-y-auto">
+                          {userData?.friends?.map((friend: string) => (
+                            <label
+                              key={friend}
+                              className="flex items-center gap-2 cursor-pointer"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selectedFriends.includes(friend)}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setSelectedFriends((prev) => [
+                                      ...prev,
+                                      friend,
+                                    ]);
+                                  } else {
+                                    setSelectedFriends((prev) =>
+                                      prev.filter((f) => f !== friend)
+                                    );
+                                  }
+                                }}
+                              />
+                              {friend}
+                            </label>
+                          ))}
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex justify-center gap-4">
+                          <button
+                            className="bg-gray-400 text-white px-3 py-1 rounded-lg"
+                            onClick={() => {
+                              setCreateGroup(false);
+                              setSelectedFriends([]);
+                              setGroupName("");
+                            }}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            className="bg-blue-600 text-white px-3 py-1 rounded-lg"
+                            onClick={() => {
+                              handleCreateGroup();
+                            }}
+                          >
+                            Create
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {(userData?.groups?.length === 0 ||
+                    userData?.groups === undefined) && (
+                    <div className="text-center">
+                      You have no groups currently
+                    </div>
+                  )}
                   {userData?.groups?.map((group) => (
                     <div
-                      key={group.id}
+                      key={group.roomId}
                       className="text-center p-2 cursor-pointer"
                       onClick={() => {
                         setInChat(true);
-                        setRoom(group.id);
+                        console.log(group);
+                        setRoom(group);
                       }}
                     >
-                      {group.name}
+                      {group.room}
                     </div>
                   ))}
                 </div>
@@ -376,14 +520,15 @@ const RightPanel = () => {
                 onClick={() => {
                   setInChat(false);
                   setTargetUser("");
+                  setRoom(null);
                 }}
               />
-              {targetUser}
+              {targetUser || room?.room}
             </div>
             <div
               ref={chatRef}
               onScroll={handleScroll}
-              className="overflow-y-scroll h-10/12 pb-1 flex flex-col justify-end gap-2"
+              className="overflow-y-scroll h-10/12 pb-1 flex flex-col gap-2"
             >
               {messages.length === 0 ? (
                 <div className="text-center">
@@ -393,9 +538,11 @@ const RightPanel = () => {
                 messages
                   .filter(
                     (msg) =>
-                      (msg.from === targetUser &&
-                        msg.to === userData?.username) ||
-                      (msg.from === userData?.username && msg.to === targetUser)
+                      msg.chatKey === `${room?.room}:${room?.roomId}` ||
+                      msg.chatKey ===
+                        `chat:${[userData?.username, targetUser]
+                          .sort()
+                          .join(":")}`
                   )
                   .map((msg, idx) => (
                     <div

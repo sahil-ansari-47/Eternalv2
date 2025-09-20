@@ -51,7 +51,7 @@ io.on("connection", (socket: Socket) => {
     //   for(const msg of msgs) io.to(roomId).emit("roomMessage", msg);
     //   messages[roomId]= msgs;
     // }
-    console.log(messages);
+    // console.log(messages);
     const count = await redis.llen(username.concat(":pending"));
     const pendingMessages: any = await redis.lpop(
       username.concat(":pending"),
@@ -65,23 +65,10 @@ io.on("connection", (socket: Socket) => {
 
   // ✅ One-to-One Messaging
   socket.on(
-    "privateMessage",
-    async ({
-      to,
-      text,
-      id,
-      from,
-      timestamp,
-    }: {
-      to: string;
-      text: string;
-      id: string;
-      from: string;
-      timestamp: Date;
-    }) => {
+    "privateMessage", async ({to, text, id, from, timestamp, chatKey} :
+      {to: string; text: string; id: string; from: string; timestamp: Date; chatKey: string;}) => {
       const toSocketId = users[to]; // lookup by username
       console.log(toSocketId);
-      const chatKey = `chat:${[from, to].sort().join(":")}`;
       console.log(chatKey);
       const message = {
         id,
@@ -108,22 +95,42 @@ io.on("connection", (socket: Socket) => {
     "createRoom",
     async ({
       room,
+      roomId,
       participants,
     }: {
       room: string;
+      roomId: string;
       participants: string[];
     }) => {
-      const group = await RoomModel.findOneAndUpdate(
-        { name: room },
-        { name: room, participants },
-        { upsert: true }
-      );
-      if(!group) return;
-      for (const participant of participants) {
-        await UserModel.findOneAndUpdate(
-          { username: participant },
-          { $push: { groups: group._id } },
-        )
+      try {
+        const creator = sockets[socket.id];
+        await RoomModel.findOneAndUpdate(
+          { roomId },
+          { roomId, name: room, participants },
+          { upsert: true }
+        );
+        //issue new user joined
+        for (const participant of participants) {
+          await UserModel.findOneAndUpdate(
+            { username: participant },
+            { $push: { groups: { room, roomId } } }
+          );
+        }
+        const message = {
+          id: crypto.randomUUID(),
+          room,
+          chatKey: `${room}:${roomId}`,
+          from: "system",
+          text: `${room} created by ${creator}`,
+          timestamp: new Date(),
+        };
+        const chatKey=`${room}:${roomId}`
+        await redis.rpush(chatKey, message);
+        await redis.ltrim(chatKey, -MESSAGE_LIMIT, -1);
+        await MessageModel.create(message);
+        io.to(roomId).emit("roomMessage", message);
+      } catch (e) {
+        console.log(e);
       }
     }
   );
@@ -134,12 +141,11 @@ io.on("connection", (socket: Socket) => {
       socket.join(roomId);
       const username = sockets[socket.id] ?? "Unknown";
       console.log(`${username} joined room: ${room}`);
-
-      io.to(roomId).emit("roomMessage", {
-        from: "system",
-        text: `${username} joined the room.`,
-        room,
-      });
+      // io.to(roomId).emit("roomMessage", {
+      //   from: "system",
+      //   text: `${username} joined the room.`,
+      //   room,
+      // });
     }
   );
 
@@ -153,6 +159,7 @@ io.on("connection", (socket: Socket) => {
       text,
       from,
       timestamp,
+      chatKey,
     }: {
       id: string;
       room: string;
@@ -160,19 +167,20 @@ io.on("connection", (socket: Socket) => {
       text: string;
       from: string;
       timestamp: Date;
+      chatKey: string;
     }) => {
       const message = {
         id,
         from,
         text,
         room,
-        roomId,
+        chatKey,
         timestamp,
       };
-      await redis.rpush(roomId, message);
-      await redis.ltrim(roomId, -MESSAGE_LIMIT, -1);
+      await redis.rpush(chatKey, message);
+      await redis.ltrim(chatKey, -MESSAGE_LIMIT, -1);
       await MessageModel.create(message);
-      io.to(roomId).emit("roomMessage", { message });
+      io.to(roomId).emit("roomMessage", message);
       console.log(`👥 [${room}] ${from}: ${text}`);
     }
   );
@@ -212,7 +220,7 @@ const syncUser = async (
       { upsert: true, new: true }
     );
 
-    (req as any).user = mongoUser; // ✅ assign Mongo user, not Clerk
+    (req as any).user = mongoUser;
     next();
   } catch (err) {
     console.error("Error syncing user:", err);
@@ -269,7 +277,7 @@ app.put("/api/friends/handle", requireAuth(), async (req, res) => {
     res.status(200).json({ message: "Friend request rejected", to });
   }
 });
-app.get("/api/messages", async (req, res) => {
+app.get("/api/pvtmessages", async (req, res) => {
   try {
     const { from, to } = req.query;
     console.log("Fetching messages...");
@@ -285,7 +293,7 @@ app.get("/api/messages", async (req, res) => {
   }
 });
 
-app.get("/api/messages/history", async (req, res) => {
+app.get("/api/pvtmessages/history", async (req, res) => {
   console.log("fetch history");
   try {
     const { from, to, before } = req.query;
@@ -302,6 +310,18 @@ app.get("/api/messages/history", async (req, res) => {
   } catch (err) {
     console.error("Error fetching history:", err);
     res.status(500).json({ error: "Failed to fetch history" });
+  }
+});
+
+app.get("/api/roommessages", async (req, res) => {
+  try {
+    const { room, roomId } = req.query;
+    console.log("Fetching messages...");
+    const messages = await redis.lrange(`${room}:${roomId}`, -MESSAGE_LIMIT, -1);
+    res.json(messages);
+  } catch (err) {
+    console.error("Error fetching messages:", err);
+    res.status(500).json({ error: "Failed to fetch messages" });
   }
 });
 

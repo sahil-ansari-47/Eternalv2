@@ -7,7 +7,6 @@ export interface IMessage extends Document {
   to?: string;
   text: string;
   room?: string;
-  roomId?: string;
   chatKey?: string;
   timestamp?: Date;
 }
@@ -19,7 +18,6 @@ const MessageSchema: Schema = new Schema<IMessage>(
     to: { type: String, required: false },
     text: { type: String, required: true },
     room: { type: String, required: false },
-    roomId: { type: String, required: false },
     chatKey: { type: String, required: false },
     timestamp: { type: Date, required: true },
   },
