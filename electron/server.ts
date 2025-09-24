@@ -202,7 +202,7 @@ io.on("connection", (socket: Socket) => {
   // Call signaling messages: offer/answer/ice
   // Forward an SDP offer to callee
   socket.on("offer", ({ to, offer, from }: { to: string; offer: any; from: string }) => {
-    console.log("offer-hit");
+    console.log("offer-hit", to, from);
     const toId = users[to];
     console.log(toId);
     if (toId) {
@@ -211,18 +211,21 @@ io.on("connection", (socket: Socket) => {
   });
 
   // Forward an answer to the caller
-  socket.on("answer", ({ to, answer, from }: { to: string; answer: any; from: string }) => {
+  socket.on("answer", ({ to, answer }: { to: string; answer: any }) => {
     const toId = users[to];
+    console.log('answer hit', to, toId);
     if (toId) {
-      io.to(toId).emit("answer", { from, answer });
+      io.to(toId).emit("answer", { answer });
     }
   });
 
   // Forward ICE candidates (both ways)
-  socket.on("ice-candidate", ({ to, candidate, from }: { to: string; candidate: any; from: string }) => {
+  socket.on("ice-candidate", ({ to, candidate }: { to: string; candidate: any }) => {
+    console.log("ice-candidate hit", to);
     const toId = users[to];
+    console.log(toId);
     if (toId) {
-      io.to(toId).emit("ice-candidate", { from, candidate });
+      io.to(toId).emit("ice-candidate", { candidate });
     }
   });
 

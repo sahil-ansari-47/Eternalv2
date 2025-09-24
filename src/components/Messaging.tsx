@@ -1,7 +1,14 @@
 import { useEffect, useState, useRef } from "react";
 import { io } from "socket.io-client";
 import { Input } from "./ui/input";
-import { ChevronLeft, PhoneOff, Video, VideoOff } from "lucide-react";
+import {
+  ChevronLeft,
+  PhoneOff,
+  Video,
+  VideoOff,
+  MicOff,
+  Mic,
+} from "lucide-react";
 import { SignedIn, SignedOut, SignInButton, useAuth } from "@clerk/clerk-react";
 const socket = io("http://localhost:3000");
 
@@ -37,16 +44,23 @@ type ChatMode = "private" | "group";
 
 const Messaging = () => {
   const ICE_SERVERS = [
-    { urls: "stun:stun.l.google.com:19302" }, // public STUN
-    // Example TURN entry (replace with your credentials)
     {
-      urls: "turn:YOUR_TURN_SERVER_IP:3478",
-      username: "user1", // or use token-based auth depending on coturn setup
-      credential: "pass1",
-    },
+      urls: [
+        "stun:stun.l.google.com:19302",
+        // "stun:global.stun.twilio.com:3478",
+      ],
+    }, // public STUN
+    // Example TURN entry (replace with your credentials)
+    // {
+    //   urls: "turn:YOUR_TURN_SERVER_IP:3478",
+    //   username: "user1", // or use token-based auth depending on coturn setup
+    //   credential: "pass1",
+    // },
   ];
   const lsRef = useRef<MediaStream | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
+  const [toggleVideo, setToggleVideo] = useState(false);
+  const [toggleAudio, setToggleAudio] = useState(false);
   const [inCall, setInCall] = useState(false);
   const { isSignedIn, getToken } = useAuth();
   const [userData, setUserData] = useState<UserData | null>(null);
@@ -226,7 +240,7 @@ const Messaging = () => {
         return;
       }
       setTargetUser(from);
-      pcRef.current = createPeerConnection();
+      pcRef.current = createPeerConnection(from);
       const stream = await ensureLocalStream();
       if (stream)
         for (const track of stream.getTracks()) {
@@ -234,33 +248,33 @@ const Messaging = () => {
         }
       let answer;
       if (pcRef) {
-        await pcRef.current.setRemoteDescription(
-          new RTCSessionDescription(offer)
-        );
+        await pcRef.current.setRemoteDescription(offer);
         answer = await pcRef.current.createAnswer();
-        console.log("pc", pcRef.current);
         await pcRef.current.setLocalDescription(answer);
+        console.log("pc", pcRef.current);
       }
-      socket.emit("answer", { to: from, from: userData?.username, answer });
+      socket.emit("answer", { to: from, answer });
     });
-    socket.on("answer", async ({ from, answer }) => {
+    socket.on("answer", async ({ answer }) => {
+      console.log("answer", answer);
       if (!pcRef.current) {
-        console.warn("No RTCPeerConnection for answer");
+        console.log("No RTCPeerConnection for answer");
         return;
       }
-      await pcRef.current.setRemoteDescription(
-        new RTCSessionDescription(answer)
-      );
+      await pcRef.current.setRemoteDescription(answer);
+      console.log("pc", pcRef.current.remoteDescription);
     });
-    socket.on("ice-candidate", async ({ _, candidate }) => {
+    socket.on("ice-candidate", async ({ candidate }) => {
+      console.log("remote candidate:", candidate);
       if (!pcRef.current) {
-        console.warn(
+        console.log(
           "No RTCPeerConnection; buffering candidates not implemented in this simple sample"
         );
         return;
       }
       try {
         await pcRef.current.addIceCandidate(candidate);
+        console.log("added ice candidate");
       } catch (err) {
         console.error("Error adding ICE candidate:", err);
       }
@@ -269,6 +283,13 @@ const Messaging = () => {
     return () => {
       socket.off("privateMessage");
       socket.off("roomMessage");
+      socket.off("offer");
+      socket.off("answer");
+      socket.off("ice-candidate");
+      if (pcRef.current) {
+        pcRef.current.close();
+        pcRef.current = null;
+      }
     };
   }, [userData?.username]);
 
@@ -398,30 +419,34 @@ const Messaging = () => {
     setGroupName("");
     fetchUser();
   };
-  function createPeerConnection() {
+  function createPeerConnection(target: string) {
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
 
     pc.onicecandidate = (evt) => {
       if (evt.candidate) {
+        console.log("local candidate:", evt.candidate.candidate);
+        console.log("target user:", target);
         socket.emit("ice-candidate", {
-          to: targetUser,
-          from: userData?.username,
+          to: target,
           candidate: evt.candidate,
         });
+      } else {
+        console.log("done gathering candidates");
       }
     };
     pc.ontrack = (evt) => {
-      if (remoteVideo.current && evt.streams[0]) {
+      if (remoteVideo.current && !remoteVideo.current.srcObject) {
         console.log("Remote stream tracks:", evt.streams[0].getTracks());
-        console.log("Remote video ref:", remoteVideo.current);
         remoteVideo.current.srcObject = evt.streams[0];
-      } else {
-        console.warn("remoteVideo ref not ready yet");
-        setTimeout(() => {
-          if (remoteVideo.current && evt.streams[0])
-            remoteVideo.current.srcObject = evt.streams[0];
-        }, 0);
+        console.log("Remote video src:", remoteVideo.current.srcObject);
       }
+      //  else {
+      //   console.warn("remoteVideo ref not ready yet");
+      //   setTimeout(() => {
+      //     if (remoteVideo.current && evt.streams[0])
+      //       remoteVideo.current.srcObject = evt.streams[0];
+      //   }, 0);
+      // }
     };
     return pc;
   }
@@ -447,7 +472,7 @@ const Messaging = () => {
       return;
     }
     setInCall(true);
-    pcRef.current = createPeerConnection();
+    pcRef.current = createPeerConnection(to);
     const stream = await ensureLocalStream();
     if (stream) {
       for (const track of stream.getTracks()) {
@@ -474,13 +499,26 @@ const Messaging = () => {
       pcRef.current.close();
       pcRef.current = null;
     }
-    setTargetUser("");
     if (lsRef.current) {
       for (const track of lsRef.current.getTracks()) track.stop();
       lsRef.current = null;
       if (localVideo.current) localVideo.current.srcObject = null;
     }
   };
+  function toggleLocalAudio(enabled: boolean) {
+    setToggleAudio(enabled);
+    if (!lsRef.current) return;
+    lsRef.current
+      .getAudioTracks()
+      .forEach((track) => (track.enabled = enabled));
+  }
+  function toggleLocalVideo(enabled: boolean) {
+    setToggleVideo(enabled);
+    if (!lsRef.current) return;
+    lsRef.current
+      .getVideoTracks()
+      .forEach((track) => (track.enabled = enabled));
+  }
   return (
     <div className="h-full flex flex-col bg-primary-sidebar text-white">
       {/* Messages */}
@@ -749,24 +787,40 @@ const Messaging = () => {
       )}
       {inCall && (
         <div className="flex flex-col items-center h-full gap-10">
-          <h1 className="text-2xl mt-4">Call with {targetUser}</h1>
+          <h1 className="text-xl mt-10">Call with {targetUser}</h1>
           <video
             autoPlay
             playsInline
             ref={remoteVideo}
-            className="w-[90%] h-64 border-2 border-neutral-300"
+            className="w-[90%] h-[30%] border-2 border-neutral-300"
           />
           <video
             autoPlay
             playsInline
             muted
             ref={localVideo}
-            className="w-[90%] h-64 border-2 border-neutral-300"
+            className="w-[90%] h-[30%] border-2 border-neutral-300"
           />
-          <PhoneOff
-            className="bg-red-500 size-10 p-2 rounded-full cursor-pointer"
-            onClick={handleHangup}
-          />
+          <div className="flex gap-4">
+            <button onClick={() => toggleLocalAudio(!toggleAudio)}>
+              {toggleAudio ? (
+                <Mic className="size-10 p-2 rounded-full bg-neutral-300 text-primary-sidebar cursor-pointer" />
+              ) : (
+                <MicOff className="size-10 p-2 rounded-full border-1 border-neutral-300 cursor-pointer" />
+              )}
+            </button>
+            <button onClick={() => toggleLocalVideo(!toggleVideo)}>
+              {toggleVideo ? (
+                <Video className="size-10 p-2 rounded-full bg-neutral-300 text-primary-sidebar cursor-pointer" />
+              ) : (
+                <VideoOff className="size-10 p-2 rounded-full border-1 border-neutral-300 cursor-pointer" />
+              )}
+            </button>
+            <PhoneOff
+              className="bg-red-500 size-10 p-2 rounded-full cursor-pointer"
+              onClick={handleHangup}
+            />
+          </div>
         </div>
       )}
       <SignedOut>
