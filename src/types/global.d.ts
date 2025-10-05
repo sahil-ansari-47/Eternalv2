@@ -102,14 +102,9 @@ declare global {
       gitClone: (repoUrl: string, targetDir: string) => Promise<void>;
     };
     chatAPI: {
-      register: (username: string) => void;
-      onPrivate: (
-        callback: (msg: { from: string; text: string }) => void
-      ) => void;
-      onRoom: (
-        callback: (msg: { from: string; text: string; room: string }) => void
-      ) => void;
-      sendPrivate: (targetUser: string, text: string) => void;
+      logMessage: (message: Message) => void;
+      messageNotification: (message: Message) => void;
+      callNotification: (target: string, video: boolean) => boolean;
     };
     terminalAPI: {
       onData: (cb: (data: string) => void) => void;

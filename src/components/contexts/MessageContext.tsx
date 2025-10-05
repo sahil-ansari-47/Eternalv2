@@ -4,6 +4,8 @@ import { useUser } from "./UserContext";
 interface MessageContextType {
   targetUser: string;
   setTargetUser: React.Dispatch<React.SetStateAction<string>>;
+  room: Group | null;
+  setRoom: React.Dispatch<React.SetStateAction<Group | null>>;
   messages: Message[];
   setMessages: React.Dispatch<React.SetStateAction<Message[]>>;
   pendingMessages: Message[];
@@ -35,6 +37,7 @@ export const MessageProvider = ({
       urls: ["stun:stun.l.google.com:19302"],
     },
   ];
+  const [room, setRoom] = useState<Group | null>(null);
   const { socket } = useUser();
   const [messages, setMessages] = useState<Message[]>([]);
   const [pendingMessages, setPendingMessages] = useState<Message[]>([]);
@@ -92,6 +95,8 @@ export const MessageProvider = ({
       value={{
         targetUser,
         setTargetUser,
+        room,
+        setRoom,
         messages,
         setMessages,
         pendingMessages,

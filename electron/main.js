@@ -1,7 +1,7 @@
-import { app, BrowserWindow, ipcMain, dialog } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, Notification } from "electron";
 import path from "path";
 import fs from "fs/promises";
-import fssync, { readdirSync, statSync } from "fs";
+import fssync from "fs";
 import { fileURLToPath } from "url";
 import { spawn } from "child_process";
 // import os from "os";
@@ -9,15 +9,16 @@ import { spawn } from "child_process";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const isDev = !app.isPackaged;
-
+let mainWindow;
 const windows = new Set(); // track all windows
 const watchers = new Map();
+let tray = null;
 // let shell;
 
 // const terminals = {};
 // Helper to create a new BrowserWindow
 function createWindow() {
-  const win = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     frame: false,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -27,24 +28,27 @@ function createWindow() {
   });
 
   if (isDev) {
-    win.loadURL("http://localhost:5173");
-    win.webContents.openDevTools();
+    mainWindow.loadURL("http://localhost:5173");
+    mainWindow.webContents.openDevTools();
   } else {
-    win.loadFile(path.join(__dirname, "../dist/index.html"));
+    mainWindow.loadFile(path.join(__dirname, "../dist/index.html"));
   }
-  win.on("closed", () => {
-    windows.delete(win);
+  mainWindow.on("close", (e) => {
+    if (!app.isQuitting) {
+      e.preventDefault();
+      mainWindow.hide();
+    }
   });
   // Attach maximize/unmaximize events directly to this window
-  win.on("maximize", () => {
-    win.webContents.send("window:onmaximize");
+  mainWindow.on("maximize", () => {
+    mainWindow.webContents.send("window:onmaximize");
   });
-  win.on("unmaximize", () => {
-    win.webContents.send("window:onunmaximize");
+  mainWindow.on("unmaximize", () => {
+    mainWindow.webContents.send("window:onunmaximize");
   });
 
-  windows.add(win);
-  return win;
+  windows.add(mainWindow);
+  return mainWindow;
 }
 
 // Broadcast to all windows
@@ -53,11 +57,46 @@ function broadcast(channel, data) {
     window.webContents.send(channel, data);
   }
 }
+app.setAppUserModelId("Eternal");
+// app.setLoginItemSettings({
+//   openAtLogin: true,
+//   path: app.getPath("exe"),
+// });
 
 // App ready
 app.whenReady().then(() => {
+  ipcMain.handle("window:isMaximized", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    return win ? win.isMaximized() : false;
+  });
+
   createWindow();
 
+  tray = new Tray(
+    "C:\\Users\\LENOVO\\OneDrive\\Desktop\\Projects\\Eternalv2\\electron\\Logo.png"
+  );
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: "Eternal",
+      click: () => {
+        mainWindow.show();
+        mainWindow.focus();
+      },
+    },
+    {
+      label: "Quit",
+      click: () => {
+        app.isQuitting = true;
+        app.quit();
+      },
+    },
+  ]);
+  tray.setToolTip("Notification Listener");
+  tray.setContextMenu(contextMenu);
+  tray.on("click", () => {
+    mainWindow.show();
+    mainWindow.focus();
+  });
   // const shellPath =
   //   process.platform === "win32"
   //     ? "powershell.exe"
@@ -107,16 +146,25 @@ app.whenReady().then(() => {
 
   ipcMain.on("window:close", (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
-    if (win) win.close();
-  });
-
-  ipcMain.handle("window:isMaximized", (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender);
-    return win ? win.isMaximized() : false;
+    if (win) win.hide();
   });
 
   ipcMain.handle("window:new", () => createWindow());
 
+  ipcMain.on("chat:messageNotification", (_, message) => {
+    new Notification({
+      icon: "C:/Users/LENOVO/OneDrive/Desktop/Projects/Eternalv2/electron/Logo.png",
+      title: `New message from ${message.from}${message.room ? ` - ${message.room}` : ""}`,
+      body: message.text,
+    }).show();
+  });
+  ipcMain.on("chat:callNotification", (_, { target, video }) => {
+    new Notification({
+      icon: "C:/Users/LENOVO/OneDrive/Desktop/Projects/Eternalv2/electron/Logo.png",
+      title: "Eternal",
+      body: `${video ? "Video" : "Voice"} call from ${target}`,
+    }).show();
+  });
   // Dialog
   ipcMain.handle("dialog:openFolder", async () => {
     const res = await dialog.showOpenDialog({ properties: ["openDirectory"] });
@@ -314,8 +362,8 @@ app.on("activate", () => {
 });
 
 // Quit on all windows closed
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
+app.on("window-all-closed", (e) => {
+  e.preventDefault();
 });
 
 async function getAllFiles(dir) {

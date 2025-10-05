@@ -41,6 +41,8 @@ const Messaging = () => {
   const {
     targetUser, 
     setTargetUser,
+    room, 
+    setRoom,
     messages,
     setMessages,
     pendingMessages,
@@ -60,8 +62,7 @@ const Messaging = () => {
   const [showReceived, setShowReceived] = useState(true);
   const [showSent, setShowSent] = useState(true);
   const [friendQuery, setFriendQuery] = useState("");
-  const [searchUser, setSearchUser] = useState("");
-  const [room, setRoom] = useState<Group | null>(null);
+  const [searchUser, setSearchUser] = useState(""); 
   const [inChat, setInChat] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const chatRef = useRef<HTMLDivElement>(null);

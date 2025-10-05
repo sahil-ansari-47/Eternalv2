@@ -37,7 +37,9 @@ const App = () => {
     setAcceptDialog,
   } = useUser();
   const {
+    targetUser,
     setTargetUser,
+    room,
     setMessages,
     setPendingMessages,
     pcRef,
@@ -82,10 +84,14 @@ const App = () => {
       }) => {
         msg.timestamp = new Date(msg.timestamp);
         setMessages((prev) => [...prev, msg]);
+        // window.chatAPI.logMessage(msg);
+        const chatKey = `chat:${[userData?.username, targetUser]
+          .sort()
+          .join(":")}`;
+        if (chatKey !== msg.chatKey) window.chatAPI.messageNotification(msg);
       }
     );
     socket.on("pendingMessage", (msg: Message) => {
-      console.log("received");
       msg.timestamp = new Date(msg.timestamp);
       setPendingMessages((prev) => [...prev, msg]);
     });
@@ -99,17 +105,10 @@ const App = () => {
         timestamp: Date;
         room: string;
       }) => {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            from: msg.from,
-            text: msg.text,
-            room: msg.room,
-            timestamp: new Date(msg.timestamp),
-            chatKey: msg.chatKey,
-          },
-        ]);
+        msg.timestamp = new Date(msg.timestamp);
+        setMessages((prev) => [...prev, msg]);
+        const chatKey = `${room?.room}:${room?.roomId}`;
+        if (chatKey !== msg.chatKey) window.chatAPI.messageNotification(msg);
       }
     );
     socket.on("offer", async ({ from, offer, callType }) => {
@@ -117,6 +116,9 @@ const App = () => {
       setPendingOffer(offer);
       setAcceptDialog(true);
       setToggleVideo(callType);
+      if (document.hidden) {
+        window.chatAPI.callNotification(from, callType);
+      }
     });
     socket.on("answer", async ({ answer }) => {
       console.log("answer", answer);
@@ -177,7 +179,7 @@ const App = () => {
         pcRef.current = null;
       }
     };
-  }, [isSignedIn, userData?.username]);
+  }, [isSignedIn, userData?.username, targetUser, room]);
   useEffect(() => {
     fetchUser().catch((err) => console.error("Failed to sync user:", err));
   }, [isSignedIn]);

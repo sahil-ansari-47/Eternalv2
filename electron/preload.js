@@ -60,9 +60,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
 });
 
 contextBridge.exposeInMainWorld("chatAPI", {
-  send: (channel, data) => ipcRenderer.send(channel, data),
-  on: (channel, callback) =>
-    ipcRenderer.on(channel, (_, data) => callback(data)),
+  logMessage: (message) => ipcRenderer.send("chat:logMessage", message),
+  messageNotification: (message) =>
+    ipcRenderer.send("chat:messageNotification", message),
+  callNotification: (target, video) =>
+    ipcRenderer.send("chat:callNotification", {target, video}),
 });
 const originalConsoleError = console.error;
 console.error = (...args) => {

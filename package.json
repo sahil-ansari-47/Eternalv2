@@ -1,5 +1,6 @@
 {
   "name": "eternalv2",
+  "productName": "Eternal",
   "version": "1.0.0",
   "main": "electron/main.js",
   "type": "module",
