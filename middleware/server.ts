@@ -452,11 +452,9 @@ app.get("/api/roommessages/history", async (req, res) => {
   }
 });
 
-const TRELLO_API_KEY = "cf65b856f8f927361f2b67a0e7cf6e33";
-const TRELLO_SECRET =
-  "49299d59a792d2ff74685ce5b2cfc75d35717368af5f370769cf601894595b80";
-// const TRELLO_TOKEN =
-//   "ATTA28554430099fbeee96ba6832d37167a2b881b57c7d0bdd7c47d99304b0d04a0462114C2F";
+const TRELLO_API_KEY = process.env.TRELLO_API_KEY!;
+const TRELLO_SECRET = process.env.TRELLO_SECRET!;
+// const TRELLO_TOKEN = process.env.TRELLO_TOKEN!;
 const callbackUrl = "http://127.0.0.1:3000/api/auth/trello/callback";
 const trelloOAuth = new OAuth.OAuth(
   "https://trello.com/1/OAuthGetRequestToken",
