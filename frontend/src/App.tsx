@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 // import { ToastNotification, TemplateType, ToastButton } from 'electron-windows-notifications';
 import {
@@ -62,17 +62,30 @@ const App = () => {
   const [rightContent, setRightContent] = useState<"assist" | "chat" | null>(
     null
   );
+  const bufferedCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
   useEffect(() => {
-    if (isSignedIn && userData?.username) {
-      socket.emit("register", userData?.username);
-      if (userData?.groups) {
-        for (const group of userData?.groups) {
+    if (!isSignedIn || !userData?.username) {
+      // If user signed out, disconnect socket cleanly
+      if (socket.connected) socket.disconnect();
+      return;
+    }
+
+    // Connect only after userData is ready
+    if (!socket.connected) {
+      socket.connect();
+    }
+
+    // Once connected, register the user
+    socket.once("connect", () => {
+      console.log("✅ Socket connected:", socket.id);
+      socket.emit("register", userData.username);
+
+      if (userData.groups) {
+        for (const group of userData.groups) {
           socket.emit("joinRoom", group);
         }
       }
-    } else {
-      return;
-    }
+    });
     socket.on(
       "privateMessage",
       (msg: {
@@ -132,14 +145,13 @@ const App = () => {
     });
     socket.on("ice-candidate", async ({ candidate }) => {
       if (!pcRef.current) {
-        console.log(
-          "No RTCPeerConnection; buffering candidates not implemented in this simple sample"
-        );
+        console.log("Buffering ICE candidate");
+        bufferedCandidatesRef.current.push(candidate);
         return;
       }
       try {
         await pcRef.current.addIceCandidate(candidate);
-        console.log("added ice candidate");
+        console.log("Added ICE candidate");
       } catch (err) {
         console.error("Error adding ICE candidate:", err);
       }
@@ -174,6 +186,10 @@ const App = () => {
       socket.off("roomMessage");
       socket.off("offer");
       socket.off("answer");
+      socket.off("call-rejected");
+      socket.off("pendingMessage");
+      socket.off("hangup");
+      socket.off("connect")
       socket.off("ice-candidate");
       if (pcRef.current) {
         pcRef.current.close();
@@ -190,6 +206,15 @@ const App = () => {
     setInCall(true);
     setTargetUser(incomingFrom);
     pcRef.current = createPeerConnection(incomingFrom);
+    bufferedCandidatesRef.current.forEach(async (candidate) => {
+      try {
+        if (pcRef.current) await pcRef.current.addIceCandidate(candidate);
+        console.log("Flushed buffered ICE candidate");
+      } catch (err) {
+        console.error("Error flushing candidate:", err);
+      }
+    });
+    bufferedCandidatesRef.current = [];
     const stream = await ensureLocalStream();
     if (stream) {
       for (const track of stream.getTracks()) {
@@ -204,6 +229,7 @@ const App = () => {
       answer = await pcRef.current.createAnswer();
       await pcRef.current.setLocalDescription(answer);
     }
+    console.log("answer", incomingFrom, answer);
     socket.emit("answer", { to: incomingFrom, answer });
     setIncomingFrom(null);
     setPendingOffer(null);

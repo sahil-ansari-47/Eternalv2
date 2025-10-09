@@ -5,7 +5,6 @@ import {
   ChevronDown,
   ChevronRight,
   Video,
-  UserCircle2 as UserIcon,
   Users as GroupIcon,
   UsersRound,
   UserCheck as FriendIcon,
@@ -26,22 +25,24 @@ import { Button } from "./ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { getRelativeTime } from "../utils/msfunc";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { SignedIn, SignedOut, SignInButton, useAuth } from "@clerk/clerk-react";
+import {
+  SignedIn,
+  SignedOut,
+  SignInButton,
+  useAuth,
+  UserButton,
+} from "@clerk/clerk-react";
 import { useUser } from "./contexts/UserContext";
 import { useMessage } from "./contexts/MessageContext";
 import ChatWindow from "./ChatWindow";
 type ChatMode = "private" | "group" | "friends";
 
 const Messaging = () => {
+  const { userData, fetchUser, socket } = useUser();
   const {
-    userData,
-    fetchUser,
-    socket,
-  } = useUser();
-  const {
-    targetUser, 
+    targetUser,
     setTargetUser,
-    room, 
+    room,
     setRoom,
     messages,
     setMessages,
@@ -59,10 +60,11 @@ const Messaging = () => {
   const [friendTab, setFriendTab] = useState<"friends" | "pending" | "add">(
     "friends"
   );
+  const [addingFriend, setAddingFriend] = useState(false);
   const [showReceived, setShowReceived] = useState(true);
   const [showSent, setShowSent] = useState(true);
   const [friendQuery, setFriendQuery] = useState("");
-  const [searchUser, setSearchUser] = useState(""); 
+  const [searchUser, setSearchUser] = useState("");
   const [inChat, setInChat] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const chatRef = useRef<HTMLDivElement>(null);
@@ -298,15 +300,7 @@ const Messaging = () => {
                 <FriendIcon className="size-6" />
               </div>
               <div className="cursor-pointer">
-                {userData?.avatar ? (
-                  <img
-                    src={userData?.avatar}
-                    alt=""
-                    className="rounded-full size-6"
-                  />
-                ) : (
-                  <UserIcon />
-                )}
+                <UserButton />
               </div>
             </div>
             <div className="h-full w-full flex flex-col">
@@ -708,15 +702,19 @@ const Messaging = () => {
                       className="mx-2 w-[calc(100%-16px)]"
                     />
                     <button
-                      disabled={!searchUser.trim()}
-                      className={`p-2 mx-2 rounded self-center w-[60%] ${
-                        searchUser.trim()
-                          ? "bg-p6 text-p5 hover:bg-gray-300"
-                          : "bg-gray-400 text-gray-200 cursor-not-allowed"
-                      }`}
-                      onClick={() => handleAddFriend(searchUser)}
+                      disabled={!searchUser.trim() || addingFriend}
+                      onClick={async () => {
+                        if (!searchUser.trim()) return;
+                        try {
+                          setAddingFriend(true);
+                          await handleAddFriend(searchUser);
+                        } finally {
+                          setAddingFriend(false);
+                        }
+                      }}
+                      className="p-2 mx-2 rounded self-center w-[60%] transition-colors bg-p6 text-p5 hover:bg-gray-300 disabled:bg-gray-400 disabled:text-gray-200 disabled:cursor-not-allowed disabled:hover:bg-gray-400"
                     >
-                      Add Friend
+                      {addingFriend ? "Adding..." : "Add Friend"}
                     </button>
                   </TabsContent>
                 </Tabs>
