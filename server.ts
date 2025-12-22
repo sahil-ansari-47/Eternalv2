@@ -332,9 +332,9 @@ const syncUser = async (
         arrayFilters: [{ "friend.username": username }],
       }
     );
-    await clerkClient.users.updateUser(userId, {
-      profileImageID: `https://github.com/${username}.png`,
-    });
+    // await clerkClient.users.updateUser(userId, {
+    //   profileImageID: `https://github.com/${username}.png`,
+    // });
     (req as any).user = mongoUser;
     next();
   } catch (err) {
