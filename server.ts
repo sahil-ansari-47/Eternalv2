@@ -449,7 +449,6 @@ app.get("/api/usermessages", requireAuth(), async (req, res) => {
       });
       cursor = resScan[0];
       const keys = resScan[1];
-
       for (const key of keys) {
         if (!key.endsWith(":pending")) {
           matchedKeys.push(key);
@@ -475,12 +474,16 @@ app.get("/api/usermessages", requireAuth(), async (req, res) => {
 });
 app.get("/api/messages/:chatKey", requireAuth(), async (req, res) => {
   try {
-    const { chatKey } = req.params;
-    const page = Math.max(parseInt(req.query.page as string) || 1, 1);
+    const chatKeyParam = req.params.chatKey;
+    if (typeof chatKeyParam !== "string") {
+      return res.status(400).json({ error: "chatKey param required" });
+    }
+    const chatKey: string = chatKeyParam;
+    const page = Math.max(Number(req.query.page) || 1, 1);
     const limit = MESSAGE_LIMIT;
     const skip = (page - 1) * limit;
     const messages = await MessageModel.find({ chatKey })
-      .sort({ timestamp: -1 }) // newest first
+      .sort({ timestamp: -1 })
       .skip(skip)
       .limit(limit)
       .lean();
