@@ -430,7 +430,51 @@ app.put("/api/friends/handle", requireAuth(), async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
+app.get("/api/usermessages", async (req, res) => {
+  try {
+    const { username } = req.query;
+    if (!username || typeof username !== "string") {
+      return res.status(400).json({ error: "username query param required" });
+    }
+    const rooms = await RoomModel.find({
+      participants: username,
+    }).lean();
+    const roomKeys = rooms.map((room) => `${room.name}:${room.roomId}`);
+    const matchedKeys: string[] = [];
+    let cursor = "0";
+    do {
+      const resScan = await redis.scan(cursor, {
+        match: `*${username}*`,
+        count: 100,
+      });
+      cursor = resScan[0];
+      const keys = resScan[1];
 
+      for (const key of keys) {
+        if (!key.endsWith(":pending")) {
+          matchedKeys.push(key);
+        }
+      }
+    } while (cursor !== "0");
+    const allKeys = Array.from(new Set([...roomKeys, ...matchedKeys]));
+    const results: any[] = [];
+    for (const key of allKeys) {
+      const last = await redis.lrange(key, -1, -1);
+      if (!last || last.length === 0) continue;
+      const message =
+        typeof last[0] === "string" ? JSON.parse(last[0]) : last[0];
+      results.push(message);
+    }
+    return res.json({
+      username,
+      rooms: roomKeys,
+      messages: results,
+    });
+  } catch (err) {
+    console.error("❌ /api/usermessages error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
 app.get("/api/pvtmessages", async (req, res) => {
   try {
     const { from, to } = req.query;
