@@ -430,7 +430,7 @@ app.put("/api/friends/handle", requireAuth(), async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
-app.get("/api/usermessages", async (req, res) => {
+app.get("/api/usermessages", requireAuth(), async (req, res) => {
   try {
     const { username } = req.query;
     if (!username || typeof username !== "string") {
@@ -466,8 +466,6 @@ app.get("/api/usermessages", async (req, res) => {
       results.push(message);
     }
     return res.json({
-      username,
-      rooms: roomKeys,
       messages: results,
     });
   } catch (err) {
@@ -487,11 +485,9 @@ app.get("/api/messages/:chatKey", requireAuth(), async (req, res) => {
       .limit(limit)
       .lean();
     res.json({
-      chatKey,
       page,
-      limit,
       hasMore: messages.length === limit,
-      messages: messages.reverse(), // oldest → newest
+      messages: messages.reverse(),
     });
   } catch (err) {
     console.error("Error fetching messages:", err);
