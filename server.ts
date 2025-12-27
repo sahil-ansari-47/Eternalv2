@@ -248,7 +248,6 @@ io.on("connection", (socket: Socket) => {
       }
     }
   );
-
   // Forward an answer to the caller
   socket.on("answer", ({ to, answer }: { to: string; answer: any }) => {
     const toId = users[to];
@@ -286,7 +285,18 @@ io.on("connection", (socket: Socket) => {
       io.to(toId).emit("call-accepted");
     }
   });
-
+  socket.on("toggle-video", ({ to, video }: { to: string; video: boolean }) => {
+    const toId = users[to];
+    if (toId) {
+      io.to(toId).emit("toggle-video", { video });
+    }
+  });
+  socket.on("toggle-audio", ({ to, audio }: { to: string; audio: boolean }) => {
+    const toId = users[to];
+    if (toId) {
+      io.to(toId).emit("toggle-audio", { audio });
+    }
+  });
   // Handle disconnect
   socket.on("disconnect", () => {
     const user = sockets[socket.id];
